@@ -111,60 +111,12 @@ const App: React.FC = () => {
     if (!selection || selection.rangeCount === 0) return null;
 
     const range = selection.getRangeAt(0);
+    const preCaretRange = range.cloneRange();
+    preCaretRange.selectNodeContents(element);
+    preCaretRange.setEnd(range.endContainer, range.endOffset);
+    const caretOffset = preCaretRange.toString().length;
 
-    // More accurate cursor position by traversing DOM nodes
-    let charCount = 0;
-    let foundCursor = false;
-
-    const traverseNodes = (node: Node, targetNode: Node, targetOffset: number): boolean => {
-      if (foundCursor) return true;
-
-      if (node === targetNode) {
-        // Found the target node
-        if (node.nodeType === Node.TEXT_NODE) {
-          // For text nodes, offset is character position
-          charCount += targetOffset;
-          foundCursor = true;
-          return true;
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
-          // For element nodes, offset is child index
-          // Count characters in children up to the offset
-          for (let i = 0; i < targetOffset; i++) {
-            if (i < node.childNodes.length) {
-              countCharactersInNode(node.childNodes[i]);
-            }
-          }
-          foundCursor = true;
-          return true;
-        }
-      }
-
-      // Not the target node, count all characters and continue
-      if (node.nodeType === Node.TEXT_NODE) {
-        const textLength = node.textContent?.length || 0;
-        charCount += textLength;
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        for (let i = 0; i < node.childNodes.length; i++) {
-          if (traverseNodes(node.childNodes[i], targetNode, targetOffset)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    };
-
-    const countCharactersInNode = (node: Node): void => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        charCount += node.textContent?.length || 0;
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        for (let i = 0; i < node.childNodes.length; i++) {
-          countCharactersInNode(node.childNodes[i]);
-        }
-      }
-    };
-
-    traverseNodes(element, range.startContainer, range.startOffset);
-    return charCount;
+    return caretOffset;
   };
 
   const restoreCursorPosition = (element: HTMLElement, offset: number) => {

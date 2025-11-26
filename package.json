@@ -1,5 +1,6 @@
 {
   "name": "fullstack-app",
+  "type": "module",
   "scripts": {
     "start": "node server/index.js",
     "server": "nodemon server/index.js",

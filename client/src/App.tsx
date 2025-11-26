@@ -22,6 +22,59 @@ const App: React.FC = () => {
     setPages(newPages);
   }, [blocks, engine]);
 
+  // Auto-split blocks that span multiple pages
+  useEffect(() => {
+    if (pages.length === 0) return;
+
+    // Find blocks that appear on multiple pages
+    const blockPageMap = new Map<string, Set<number>>();
+    pages.forEach(page => {
+      page.lines.forEach(line => {
+        if (!blockPageMap.has(line.blockId)) {
+          blockPageMap.set(line.blockId, new Set());
+        }
+        blockPageMap.get(line.blockId)!.add(page.pageNumber);
+      });
+    });
+
+    // Find the first block that spans pages
+    const spanningBlockId = Array.from(blockPageMap.entries())
+      .find(([_, pageSet]) => pageSet.size > 1)?.[0];
+
+    if (spanningBlockId) {
+      const block = blocks.find(b => b.id === spanningBlockId);
+      if (!block) return;
+
+      // Find where to split - at the page boundary
+      const firstPage = Math.min(...Array.from(blockPageMap.get(spanningBlockId)!));
+      const firstPageLines = pages[firstPage - 1].lines.filter(l => l.blockId === spanningBlockId);
+
+      // Calculate how much text fits on the first page
+      const textMeasurer = new (require('./textMeasurer').TextMeasurer)();
+      const contentWidth = PAGE_CONFIG.width - PAGE_CONFIG.marginLeft - PAGE_CONFIG.marginRight;
+      const allLines = textMeasurer.breakIntoLines(block.text, contentWidth);
+
+      // Find the split point (end of lines on first page)
+      const linesOnFirstPage = firstPageLines.length;
+      const textForFirstPage = allLines.slice(0, linesOnFirstPage).join('\n');
+      const textForNextPage = allLines.slice(linesOnFirstPage).join('\n');
+
+      if (textForFirstPage && textForNextPage) {
+        const blockIndex = blocks.findIndex(b => b.id === spanningBlockId);
+
+        setBlocks(prev => {
+          const newBlocks = [...prev];
+          newBlocks[blockIndex] = { ...newBlocks[blockIndex], text: textForFirstPage };
+          newBlocks.splice(blockIndex + 1, 0, {
+            id: `block-${Date.now()}-${Math.random()}`,
+            text: textForNextPage
+          });
+          return newBlocks;
+        });
+      }
+    }
+  }, [pages, blocks]);
+
   // Restore cursor positions after render
   useEffect(() => {
     if (selectAllActive) return; // Don't restore cursor during select all
@@ -483,6 +536,7 @@ const App: React.FC = () => {
           >
             <div className="page-content">
               {(() => {
+                // Group lines by blockId to handle blocks that span across pages
                 const blockGroups = new Map<string, typeof page.lines>();
                 page.lines.forEach(line => {
                   if (!blockGroups.has(line.blockId)) {
@@ -491,15 +545,27 @@ const App: React.FC = () => {
                   blockGroups.get(line.blockId)!.push(line);
                 });
 
-                return Array.from(blockGroups.entries()).map(([blockId, lines]) => {
+                // Track which block instances we've seen on this page for unique keys
+                const blockInstanceCounts = new Map<string, number>();
+
+                return Array.from(blockGroups.entries()).map(([blockId, lines], groupIndex) => {
                   const block = blocks.find(b => b.id === blockId);
                   if (!block) return null;
 
+                  // Generate unique key combining page number, block ID, and instance index
+                  const instanceCount = blockInstanceCounts.get(blockId) || 0;
+                  blockInstanceCounts.set(blockId, instanceCount + 1);
+                  const uniqueKey = `page-${page.pageNumber}-block-${blockId}-instance-${instanceCount}`;
+
                   const firstLine = lines[0];
-                  
+                  const lastLine = lines[lines.length - 1];
+
+                  // Calculate the height needed for this block segment on this page
+                  const blockHeight = (lastLine.y - firstLine.y) + PAGE_CONFIG.lineHeight;
+
                   return (
                     <div
-                      key={blockId}
+                      key={uniqueKey}
                       data-block-id={blockId}
                       contentEditable
                       suppressContentEditableWarning
@@ -513,7 +579,7 @@ const App: React.FC = () => {
                         left: 0,
                         top: firstLine.y - PAGE_CONFIG.marginTop,
                         width: '100%',
-                        minHeight: PAGE_CONFIG.lineHeight,
+                        height: blockHeight,
                         lineHeight: `${PAGE_CONFIG.lineHeight}px`,
                         fontSize: PAGE_CONFIG.fontSize,
                         fontFamily: PAGE_CONFIG.fontFamily,

@@ -216,6 +216,135 @@ const App: React.FC = () => {
     const blockId = target.getAttribute('data-block-id');
     if (!blockId) return;
 
+    // Handle multi-block deletion (Delete or Backspace)
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+
+      // Check if selection spans multiple elements
+      if (!range.collapsed && range.startContainer !== range.endContainer) {
+        // Find all selected segments
+        const allSegments = document.querySelectorAll('[data-block-id]');
+        const selectedBlocks = new Map<string, {
+          element: HTMLElement,
+          segmentStart: number,
+          segmentEnd: number,
+          isFirst: boolean,
+          isLast: boolean,
+          selectionStart?: number,
+          selectionEnd?: number
+        }>();
+
+        // Determine which segments are in the selection
+        for (const segEl of Array.from(allSegments)) {
+          const element = segEl as HTMLElement;
+          if (selection.containsNode(element, true)) {
+            const segBlockId = element.getAttribute('data-block-id');
+            if (!segBlockId) continue;
+
+            const segmentStart = parseInt(element.getAttribute('data-segment-start') || '0');
+            const segmentEnd = parseInt(element.getAttribute('data-segment-end') || '0');
+
+            if (!selectedBlocks.has(segBlockId)) {
+              selectedBlocks.set(segBlockId, {
+                element,
+                segmentStart,
+                segmentEnd,
+                isFirst: false,
+                isLast: false
+              });
+            }
+          }
+        }
+
+        // If multiple blocks are selected, handle multi-block deletion
+        if (selectedBlocks.size > 1) {
+          e.preventDefault();
+
+          // Get selection start and end positions
+          const startElement = range.startContainer.nodeType === Node.TEXT_NODE
+            ? range.startContainer.parentElement
+            : range.startContainer as HTMLElement;
+          const endElement = range.endContainer.nodeType === Node.TEXT_NODE
+            ? range.endContainer.parentElement
+            : range.endContainer as HTMLElement;
+
+          const startSegment = startElement?.closest('[data-block-id]') as HTMLElement;
+          const endSegment = endElement?.closest('[data-block-id]') as HTMLElement;
+
+          if (!startSegment || !endSegment) return;
+
+          const startBlockId = startSegment.getAttribute('data-block-id');
+          const endBlockId = endSegment.getAttribute('data-block-id');
+
+          if (!startBlockId || !endBlockId) return;
+
+          // Calculate selection offsets within segments
+          const startRange = range.cloneRange();
+          startRange.selectNodeContents(startSegment);
+          startRange.setEnd(range.startContainer, range.startOffset);
+          const startOffsetInSegment = startRange.toString().length;
+
+          const endRange = range.cloneRange();
+          endRange.selectNodeContents(endSegment);
+          endRange.setEnd(range.endContainer, range.endOffset);
+          const endOffsetInSegment = endRange.toString().length;
+
+          const startSegmentOffset = parseInt(startSegment.getAttribute('data-segment-start') || '0');
+          const endSegmentOffset = parseInt(endSegment.getAttribute('data-segment-start') || '0');
+
+          const absoluteStartOffset = startSegmentOffset + startOffsetInSegment;
+          const absoluteEndOffset = endSegmentOffset + endOffsetInSegment;
+
+          // Find block indices
+          const startBlockIndex = blocks.findIndex(b => b.id === startBlockId);
+          const endBlockIndex = blocks.findIndex(b => b.id === endBlockId);
+
+          if (startBlockIndex === -1 || endBlockIndex === -1) return;
+
+          // Get text before selection in first block and after selection in last block
+          const firstBlock = blocks[startBlockIndex];
+          const lastBlock = blocks[endBlockIndex];
+
+          const textBefore = firstBlock.text.substring(0, absoluteStartOffset);
+          const textAfter = lastBlock.text.substring(absoluteEndOffset);
+
+          // Create merged block
+          const mergedText = textBefore + textAfter;
+
+          // Update blocks - remove all selected blocks and replace with merged one
+          setBlocks(prev => {
+            const newBlocks = [...prev];
+            // Replace first block with merged text
+            newBlocks[startBlockIndex] = { ...firstBlock, text: mergedText };
+            // Remove all blocks from start+1 to end (inclusive)
+            newBlocks.splice(startBlockIndex + 1, endBlockIndex - startBlockIndex);
+            return newBlocks;
+          });
+
+          // Set cursor position
+          setTimeout(() => {
+            const elements = document.querySelectorAll(`[data-block-id="${startBlockId}"]`);
+            for (const el of Array.from(elements)) {
+              const element = el as HTMLElement;
+              const segStart = parseInt(element.getAttribute('data-segment-start') || '0');
+              const segEnd = parseInt(element.getAttribute('data-segment-end') || '0');
+
+              if (absoluteStartOffset >= segStart && absoluteStartOffset <= segEnd) {
+                element.focus();
+                restoreCursorPosition(element, absoluteStartOffset - segStart);
+                break;
+              }
+            }
+          }, 10);
+
+          return;
+        }
+      }
+    }
+
     if (e.key === 'Enter') {
       e.preventDefault();
 

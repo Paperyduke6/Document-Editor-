@@ -25,28 +25,36 @@ const App: React.FC = () => {
   // Restore cursor positions after render
   useEffect(() => {
     if (selectAllActive) return; // Don't restore cursor during select all
+    if (cursorPositionRef.current.size === 0) return; // Nothing to restore
 
-    cursorPositionRef.current.forEach((absoluteOffset, blockId) => {
-      // Find all segments for this block
-      const elements = document.querySelectorAll(`[data-block-id="${blockId}"]`);
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      cursorPositionRef.current.forEach((absoluteOffset, blockId) => {
+        // Find all segments for this block
+        const elements = document.querySelectorAll(`[data-block-id="${blockId}"]`);
 
-      // Find which segment contains this cursor position
-      for (const el of Array.from(elements)) {
-        const element = el as HTMLElement;
-        const segmentStart = parseInt(element.getAttribute('data-segment-start') || '0');
-        const segmentEnd = parseInt(element.getAttribute('data-segment-end') || '0');
+        // Find which segment contains this cursor position
+        for (const el of Array.from(elements)) {
+          const element = el as HTMLElement;
+          const segmentStart = parseInt(element.getAttribute('data-segment-start') || '0');
+          const segmentEnd = parseInt(element.getAttribute('data-segment-end') || '0');
 
-        // Check if cursor position falls within this segment's range
-        if (absoluteOffset >= segmentStart && absoluteOffset <= segmentEnd) {
-          // Calculate relative offset within this segment
-          const relativeOffset = absoluteOffset - segmentStart;
-          element.focus();
-          restoreCursorPosition(element, relativeOffset);
-          break;
+          // Check if cursor position falls within this segment's range
+          if (absoluteOffset >= segmentStart && absoluteOffset <= segmentEnd) {
+            // Calculate relative offset within this segment
+            const relativeOffset = absoluteOffset - segmentStart;
+
+            // Focus and restore cursor after a brief delay
+            setTimeout(() => {
+              element.focus();
+              restoreCursorPosition(element, relativeOffset);
+            }, 0);
+            break;
+          }
         }
-      }
+      });
+      cursorPositionRef.current.clear();
     });
-    cursorPositionRef.current.clear();
   });
 
   const handleSave = async () => {
@@ -80,6 +88,13 @@ const App: React.FC = () => {
       alert('Document loaded!');
     } catch (err) {
       alert('Load failed: ' + err);
+    }
+  };
+
+  const handleClear = () => {
+    if (window.confirm('Are you sure you want to clear the entire document? This cannot be undone.')) {
+      setBlocks([{ id: Date.now().toString(), text: '' }]);
+      setDocId('');
     }
   };
 
@@ -541,6 +556,7 @@ const App: React.FC = () => {
           onChange={e => setLoadId(e.target.value)}
         />
         <button onClick={handleLoad}>📂 Load</button>
+        <button onClick={handleClear} style={{ backgroundColor: '#e74c3c', color: 'white' }}>🗑️ Clear</button>
         {docId && <span className="doc-id">ID: {docId}</span>}
         <span className="page-count">📄 {pages.length} {pages.length === 1 ? 'Page' : 'Pages'}</span>
       </div>

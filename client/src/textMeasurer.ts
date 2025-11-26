@@ -17,9 +17,13 @@ export class TextMeasurer {
   breakIntoLines(text: string, maxWidth: number): string[] {
     if (!text) return [''];
 
+    // Normalize line endings: handle \r\n (Windows), \r (old Mac), and \n (Unix)
     // Replace tabs with 4 spaces (standard tab width)
-    const processedText = text.replace(/\t/g, '    ');
-    
+    const processedText = text
+      .replace(/\r\n/g, '\n')  // Windows line endings
+      .replace(/\r/g, '\n')     // Old Mac line endings
+      .replace(/\t/g, '    ');  // Tabs to spaces
+
     // Handle explicit line breaks
     const paragraphs = processedText.split('\n');
     const allLines: string[] = [];

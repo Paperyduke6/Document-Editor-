@@ -44,7 +44,7 @@ interface ContentBlock {
 
 ### BlockSegment (Rendering Model)
 
-**Philosophy**: Segments are *ephemeral* views of block data for rendering.
+**Philosophy**: Segments are *ephemeral* or complete views of block data for rendering.
 
 ```typescript
 interface BlockSegment {
@@ -67,6 +67,8 @@ interface BlockSegment {
 
 ## Pagination Algorithm
 
+The `PaginationEngine` performs pagination by processing content blocks sequentially, breaking each block's text into lines that fit the page width using `TextMeasurer`. It tracks the current vertical position (`currentY`) and places lines on the active page until reaching the bottom margin. When a line won't fit, it finalizes the current page, creates a new one, and continues from the top margin. Each block is split into segments that record character offsets and line boundaries, allowing the engine to track exactly which portion of each block appears on each page.
+
 ### Input & Output
 
 **Input**: `ContentBlock[]` (array of paragraphs)
@@ -76,24 +78,11 @@ interface BlockSegment {
 
 #### Phase 1: Text Measurement
 
-```javascript
-class TextMeasurer {
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-
-  measureText(text: string): number {
-    return this.ctx.measureText(text).width;
-  }
-
-  breakIntoLines(text: string, maxWidth: number): string[] {
-    // Word-wrapping algorithm
-    // Preserves whitespace and newlines
-    // Returns array of line strings
-  }
-}
-```
-
-**Complexity**: O(n) where n = total characters
+  1. Canvas is used for Measuring text with it's inbuilt function ctx.measureText(text),
+  2. This phase has:
+  Word-wrapping algorithm
+  Preserves whitespace and newlines
+  Returns array of line strings
 
 #### Phase 2: Line Breaking
 
@@ -104,14 +93,6 @@ For each block:
    - Build lines until width exceeds `maxWidth`
    - Track character offsets for each line
 
-```javascript
-// Example: "Hello world this is a long paragraph"
-lineOffsets = [
-  { start: 0, end: 11, text: "Hello world" },
-  { start: 12, end: 27, text: "this is a long" },
-  { start: 28, end: 37, text: "paragraph" }
-]
-```
 
 #### Phase 3: Page Layout
 
@@ -156,81 +137,20 @@ for (const block of blocks) {
 }
 ```
 
-**Complexity**: O(n) where n = total lines
-
 ### Edge Cases Handled
 
 1. **Empty blocks**: Rendered as single blank line
 2. **Very long words**: Break at character boundary if no spaces
-3. **Whitespace preservation**: Tabs → 4 spaces, newlines preserved
-4. **Multi-page blocks**: Single block can span 10+ pages
+3. **Multi-page blocks**: Single block can span 10+ pages
 
 ## Rendering Strategy
-
-### React Component Structure
-
-```jsx
-<App>
-  └─ <div className="document-container">
-      {pages.map(page =>
-        <div className="page">
-          {page.segments.map(segment =>
-            <div
-              contentEditable
-              data-block-id={segment.blockId}
-              data-segment-start={segment.startOffset}
-              data-segment-end={segment.endOffset}>
-              {segment.lines.join('\n')}
-            </div>
-          )}
-        </div>
-      )}
-  </div>
-</App>
-```
 
 ### Segment Rendering
 
 Each segment is an independent `contentEditable` div:
 
-```javascript
-<div
-  key={`page-${pageNum}-segment-${blockId}-${index}`}
-  style={{
-    position: 'absolute',
-    top: segment.y - PAGE_CONFIG.marginTop,
-    height: segment.height,
-    overflow: 'hidden'  // Clips content to segment bounds
-  }}>
-  {segment.lines.join('\n')}  // ONLY visible lines
-</div>
-```
+**Critical**: Renders `segment.lines`, NOT full `block.text`
 
-**Critical**: Render `segment.lines`, NOT full `block.text`
-
-### Input Handling
-
-When user types in a segment:
-
-```javascript
-handleInput(e) {
-  const blockId = e.target.dataset.blockId;
-  const segmentStart = parseInt(e.target.dataset.segmentStart);
-  const segmentEnd = parseInt(e.target.dataset.segmentEnd);
-  const newSegmentText = e.target.textContent;
-
-  // Reconstruct full block text
-  const block = blocks.find(b => b.id === blockId);
-  const before = block.text.substring(0, segmentStart);
-  const after = block.text.substring(segmentEnd);
-  const newBlockText = before + newSegmentText + after;
-
-  // Update block
-  setBlocks(blocks.map(b =>
-    b.id === blockId ? { ...b, text: newBlockText } : b
-  ));
-}
-```
 
 ### Cursor Persistence
 
@@ -248,22 +168,7 @@ cursorPositionRef.current.set(blockId, absoluteOffset);
 // React updates DOM, cursor position lost
 
 // Phase 3: Restore (after render)
-useEffect(() => {
-  requestAnimationFrame(() => {
-    const elements = document.querySelectorAll(`[data-block-id="${blockId}"]`);
-    for (const element of elements) {
-      const segStart = element.dataset.segmentStart;
-      const segEnd = element.dataset.segmentEnd;
 
-      if (absoluteOffset >= segStart && absoluteOffset <= segEnd) {
-        const relativeOffset = absoluteOffset - segStart;
-        element.focus();
-        setCursorPosition(element, relativeOffset);
-        break;
-      }
-    }
-  });
-});
 ```
 
 **Race Condition Prevention**:
@@ -341,57 +246,14 @@ File: `server/data/71b8d791-d7b2-44e3-bf5b-bfa4ca3a34de.json`
 - No concurrent write protection
 - File I/O overhead
 
-## Performance Characteristics
 
-### Time Complexity
-
-| Operation | Complexity | Notes |
-|-----------|------------|-------|
-| Pagination | O(n) | n = total characters |
-| Text measurement | O(n) | Canvas API calls |
-| Rendering | O(s) | s = total segments |
-| Input handling | O(1) | Single block update |
-| Cursor restoration | O(s_b) | s_b = segments per block (usually 1-3) |
-
-### Space Complexity
-
-| Data Structure | Size | Notes |
-|----------------|------|-------|
-| blocks[] | O(b) | b = number of blocks |
-| pages[] | O(p) | p = number of pages |
-| segments | O(b) | Each block → 1-N segments |
-
-### Optimization Opportunities
-
-1. **Virtualization**: Only render visible pages (not implemented)
-2. **Incremental pagination**: Only repaginate changed blocks (not implemented)
-3. **Web Workers**: Offload text measurement (not implemented)
-4. **Memoization**: Cache line breaks for unchanged blocks (not implemented)
-
-**Current Status**: Optimized for documents up to ~100 pages. Beyond that, consider implementing above optimizations.
+**Current Status**: Optimized for documents up to 50-100 pages. Beyond that, consider implementing above optimizations.
 
 ## Design Decisions
 
-### Why Segments Instead of Block Splitting?
-
-**Rejected Approach**: Split blocks at page boundaries
-- ❌ Complex merge logic on backspace
-- ❌ Data model couples with presentation
-- ❌ Version history polluted with layout changes
-- ❌ Text selection breaks across split blocks
-
-**Chosen Approach**: Keep blocks intact, use segments for rendering
-- ✅ Clean separation of concerns
-- ✅ Intuitive editing behavior
-- ✅ Text selection works seamlessly
-- ✅ Data model reflects user intent
 
 ### Why Canvas for Text Measurement?
 
-**Alternatives Considered**:
-- CSS with hidden div: Slower, causes reflow
-- Fixed-width font: Inaccurate for proportional fonts
-- Estimated averages: Breaks on edge cases
 
 **Canvas API Benefits**:
 - Pixel-perfect accuracy
@@ -407,4 +269,4 @@ File: `server/data/71b8d791-d7b2-44e3-bf5b-bfa4ca3a34de.json`
 - Easy to inspect
 - Human-readable
 
-**Production Alternative**: PostgreSQL with JSONB columns for block content
+**Production Alternative**: PostgreSQL for block content

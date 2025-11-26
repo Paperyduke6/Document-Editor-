@@ -11,7 +11,7 @@ A sophisticated document editor with automatic pagination, multi-block editing, 
 
 ```bash
 # Install dependencies
-cd server && npm install
+cd server && npm install express
 cd ../client && npm install
 
 # Start backend (Terminal 1)
@@ -206,18 +206,6 @@ Critical for user experience. Implementation uses:
 4. **Race Condition Guards**: Prevent overlapping restoration attempts
 5. **Async Restoration**: Use `requestAnimationFrame` + `setTimeout` for DOM readiness
 
-## Development Notes
-
-### Running Tests
-```bash
-cd client && npm test
-```
-
-### Building for Production
-```bash
-cd client && npm run build
-# Serves optimized static files from client/build/
-```
 
 ### Environment Variables
 No environment variables required. Default configuration:

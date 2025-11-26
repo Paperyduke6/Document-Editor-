@@ -36,10 +36,11 @@ const App: React.FC = () => {
         const segmentStart = parseInt(element.getAttribute('data-segment-start') || '0');
         const segmentEnd = parseInt(element.getAttribute('data-segment-end') || '0');
 
-        // Check if cursor is within this segment
-        if (absoluteOffset >= segmentStart && absoluteOffset <= segmentEnd && document.activeElement === element) {
+        // Check if cursor position falls within this segment's range
+        if (absoluteOffset >= segmentStart && absoluteOffset <= segmentEnd) {
           // Calculate relative offset within this segment
           const relativeOffset = absoluteOffset - segmentStart;
+          element.focus();
           restoreCursorPosition(element, relativeOffset);
           break;
         }
@@ -602,6 +603,10 @@ const App: React.FC = () => {
                       textAlign: 'left',
                       unicodeBidi: 'embed',
                       overflow: 'hidden',
+                      userSelect: 'text',
+                      WebkitUserSelect: 'text',
+                      MozUserSelect: 'text',
+                      msUserSelect: 'text',
                     }}
                   >
                     {visibleText}

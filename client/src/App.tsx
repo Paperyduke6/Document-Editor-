@@ -111,12 +111,35 @@ const App: React.FC = () => {
     if (!selection || selection.rangeCount === 0) return null;
 
     const range = selection.getRangeAt(0);
-    const preCaretRange = range.cloneRange();
-    preCaretRange.selectNodeContents(element);
-    preCaretRange.setEnd(range.endContainer, range.endOffset);
-    const caretOffset = preCaretRange.toString().length;
 
-    return caretOffset;
+    // More accurate cursor position by traversing DOM nodes
+    let charCount = 0;
+    let foundCursor = false;
+
+    const traverseNodes = (node: Node): boolean => {
+      if (foundCursor) return true;
+
+      if (node === range.startContainer) {
+        charCount += range.startOffset;
+        foundCursor = true;
+        return true;
+      }
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        const textLength = node.textContent?.length || 0;
+        charCount += textLength;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        for (let i = 0; i < node.childNodes.length; i++) {
+          if (traverseNodes(node.childNodes[i])) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    traverseNodes(element);
+    return charCount;
   };
 
   const restoreCursorPosition = (element: HTMLElement, offset: number) => {
@@ -182,21 +205,16 @@ const App: React.FC = () => {
     // Get segment offsets
     const segmentStart = parseInt(target.getAttribute('data-segment-start') || '0');
 
-    // Get current cursor position within the segment
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
-
-    const range = selection.getRangeAt(0);
-    const preCaretRange = range.cloneRange();
-    preCaretRange.selectNodeContents(target);
-    preCaretRange.setEnd(range.endContainer, range.endOffset);
-    const caretOffsetInSegment = preCaretRange.toString().length;
+    // Use improved cursor position detection
+    const caretOffsetInSegment = saveCursorPosition(target);
+    if (caretOffsetInSegment === null) return;
 
     // Calculate absolute position in the full block
     const absoluteCaretOffset = segmentStart + caretOffsetInSegment;
 
     // Get the length of any selected text (to replace it)
-    const selectedText = selection.toString();
+    const selection = window.getSelection();
+    const selectedText = selection?.toString() || '';
     const selectedLength = selectedText.length;
 
     // Update the block state directly
@@ -431,14 +449,9 @@ const App: React.FC = () => {
       // Get segment offsets
       const segmentStart = parseInt(target.getAttribute('data-segment-start') || '0');
 
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
-
-      const range = selection.getRangeAt(0);
-      const preCaretRange = range.cloneRange();
-      preCaretRange.selectNodeContents(target);
-      preCaretRange.setEnd(range.endContainer, range.endOffset);
-      const caretOffsetInSegment = preCaretRange.toString().length;
+      // Use improved cursor position detection
+      const caretOffsetInSegment = saveCursorPosition(target);
+      if (caretOffsetInSegment === null) return;
 
       // Calculate absolute position in the full block
       const absoluteCaretOffset = segmentStart + caretOffsetInSegment;
@@ -477,14 +490,9 @@ const App: React.FC = () => {
         }
       }, 10);
     } else if (e.key === 'Backspace') {
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
-
-      const range = selection.getRangeAt(0);
-      const preCaretRange = range.cloneRange();
-      preCaretRange.selectNodeContents(target);
-      preCaretRange.setEnd(range.endContainer, range.endOffset);
-      const caretOffsetInSegment = preCaretRange.toString().length;
+      // Use improved cursor position detection
+      const caretOffsetInSegment = saveCursorPosition(target);
+      if (caretOffsetInSegment === null) return;
 
       // Get segment offsets
       const segmentStart = parseInt(target.getAttribute('data-segment-start') || '0');
@@ -539,14 +547,10 @@ const App: React.FC = () => {
       }
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       const currentIndex = blocks.findIndex(b => b.id === blockId);
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
 
-      const range = selection.getRangeAt(0);
-      const preCaretRange = range.cloneRange();
-      preCaretRange.selectNodeContents(target);
-      preCaretRange.setEnd(range.endContainer, range.endOffset);
-      const caretOffset = preCaretRange.toString().length;
+      // Use improved cursor position detection
+      const caretOffset = saveCursorPosition(target);
+      if (caretOffset === null) return;
 
       if (e.key === 'ArrowUp' && caretOffset === 0 && currentIndex > 0) {
         e.preventDefault();

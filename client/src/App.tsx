@@ -22,59 +22,6 @@ const App: React.FC = () => {
     setPages(newPages);
   }, [blocks, engine]);
 
-  // Auto-split blocks that span multiple pages
-  useEffect(() => {
-    if (pages.length === 0) return;
-
-    // Find blocks that appear on multiple pages
-    const blockPageMap = new Map<string, Set<number>>();
-    pages.forEach(page => {
-      page.lines.forEach(line => {
-        if (!blockPageMap.has(line.blockId)) {
-          blockPageMap.set(line.blockId, new Set());
-        }
-        blockPageMap.get(line.blockId)!.add(page.pageNumber);
-      });
-    });
-
-    // Find the first block that spans pages
-    const spanningBlockId = Array.from(blockPageMap.entries())
-      .find(([_, pageSet]) => pageSet.size > 1)?.[0];
-
-    if (spanningBlockId) {
-      const block = blocks.find(b => b.id === spanningBlockId);
-      if (!block) return;
-
-      // Find where to split - at the page boundary
-      const firstPage = Math.min(...Array.from(blockPageMap.get(spanningBlockId)!));
-      const firstPageLines = pages[firstPage - 1].lines.filter(l => l.blockId === spanningBlockId);
-
-      // Calculate how much text fits on the first page
-      const textMeasurer = new (require('./textMeasurer').TextMeasurer)();
-      const contentWidth = PAGE_CONFIG.width - PAGE_CONFIG.marginLeft - PAGE_CONFIG.marginRight;
-      const allLines = textMeasurer.breakIntoLines(block.text, contentWidth);
-
-      // Find the split point (end of lines on first page)
-      const linesOnFirstPage = firstPageLines.length;
-      const textForFirstPage = allLines.slice(0, linesOnFirstPage).join('\n');
-      const textForNextPage = allLines.slice(linesOnFirstPage).join('\n');
-
-      if (textForFirstPage && textForNextPage) {
-        const blockIndex = blocks.findIndex(b => b.id === spanningBlockId);
-
-        setBlocks(prev => {
-          const newBlocks = [...prev];
-          newBlocks[blockIndex] = { ...newBlocks[blockIndex], text: textForFirstPage };
-          newBlocks.splice(blockIndex + 1, 0, {
-            id: `block-${Date.now()}-${Math.random()}`,
-            text: textForNextPage
-          });
-          return newBlocks;
-        });
-      }
-    }
-  }, [pages, blocks]);
-
   // Restore cursor positions after render
   useEffect(() => {
     if (selectAllActive) return; // Don't restore cursor during select all
@@ -176,104 +123,6 @@ const App: React.FC = () => {
     traverseNodes(element);
   };
 
-  // Check if block will overflow page
-  const willBlockOverflowPage = (blockId: string, newText: string): boolean => {
-    // Create temporary blocks array with the new text
-    const tempBlocks = blocks.map(b => 
-      b.id === blockId ? { ...b, text: newText } : b
-    );
-    
-    // Paginate with new content
-    const tempPages = engine.paginate(tempBlocks);
-    
-    // Find which pages this block appears on
-    const blockPages = new Set<number>();
-    tempPages.forEach(page => {
-      page.lines.forEach(line => {
-        if (line.blockId === blockId) {
-          blockPages.add(page.pageNumber);
-        }
-      });
-    });
-    
-    // If block spans more than one page, it overflows
-    return blockPages.size > 1;
-  };
-
-  // Split block that overflows into current and new block
-  const splitOverflowingBlock = (blockId: string, newText: string) => {
-    const blockIndex = blocks.findIndex(b => b.id === blockId);
-    if (blockIndex === -1) return;
-
-    // Binary search to find the maximum text that fits on one page
-    let left = 0;
-    let right = newText.length;
-    let maxFitLength = 0;
-
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const testText = newText.substring(0, mid);
-      
-      const tempBlocks = blocks.map(b => 
-        b.id === blockId ? { ...b, text: testText } : b
-      );
-      const tempPages = engine.paginate(tempBlocks);
-      
-      const blockPages = new Set<number>();
-      tempPages.forEach(page => {
-        page.lines.forEach(line => {
-          if (line.blockId === blockId) {
-            blockPages.add(page.pageNumber);
-          }
-        });
-      });
-      
-      if (blockPages.size <= 1) {
-        maxFitLength = mid;
-        left = mid + 1;
-      } else {
-        right = mid - 1;
-      }
-    }
-
-    // Find last word boundary before maxFitLength
-    let splitPoint = maxFitLength;
-    while (splitPoint > 0 && newText[splitPoint] !== ' ' && newText[splitPoint] !== '\n') {
-      splitPoint--;
-    }
-    
-    // If no word boundary found, split at character
-    if (splitPoint === 0) {
-      splitPoint = maxFitLength;
-    }
-
-    const textForCurrentBlock = newText.substring(0, splitPoint).trimEnd();
-    const textForNewBlock = newText.substring(splitPoint).trimStart();
-
-    // Create new block with overflow text
-    const newBlock: ContentBlock = {
-      id: `block-${Date.now()}-${Math.random()}`,
-      text: textForNewBlock
-    };
-
-    // Update blocks
-    setBlocks(prev => {
-      const newBlocks = [...prev];
-      newBlocks[blockIndex] = { ...newBlocks[blockIndex], text: textForCurrentBlock };
-      newBlocks.splice(blockIndex + 1, 0, newBlock);
-      return newBlocks;
-    });
-
-    // Focus new block
-    setTimeout(() => {
-      const newElement = document.querySelector(`[data-block-id="${newBlock.id}"]`) as HTMLDivElement;
-      if (newElement) {
-        newElement.focus();
-        restoreCursorPosition(newElement, 0);
-      }
-    }, 10);
-  };
-
   const handleCompositionStart = useCallback(() => {
     isComposingRef.current = true;
   }, []);
@@ -291,22 +140,16 @@ const App: React.FC = () => {
 
     const cursorPosition = saveCursorPosition(target);
     const newText = target.textContent || '';
-    
-    // Check if this will cause overflow
-    if (willBlockOverflowPage(blockId, newText)) {
-      // Split the block
-      splitOverflowingBlock(blockId, newText);
-      return;
-    }
 
     if (cursorPosition !== null) {
       cursorPositionRef.current.set(blockId, cursorPosition);
     }
-    
+
+    // Update block text - blocks can now span multiple pages
     setBlocks(prev => prev.map(block =>
       block.id === blockId ? { ...block, text: newText } : block
     ));
-  }, [blocks, engine]);
+  }, []);
 
   // Handle Ctrl+A to select all content
   const handleSelectAll = useCallback((e: React.KeyboardEvent) => {
@@ -535,67 +378,58 @@ const App: React.FC = () => {
             }}
           >
             <div className="page-content">
-              {(() => {
-                // Group lines by blockId to handle blocks that span across pages
-                const blockGroups = new Map<string, typeof page.lines>();
-                page.lines.forEach(line => {
-                  if (!blockGroups.has(line.blockId)) {
-                    blockGroups.set(line.blockId, []);
-                  }
-                  blockGroups.get(line.blockId)!.push(line);
-                });
+              {page.segments.map((segment, segmentIndex) => {
+                const block = blocks.find(b => b.id === segment.blockId);
+                if (!block) return null;
 
-                // Track which block instances we've seen on this page for unique keys
-                const blockInstanceCounts = new Map<string, number>();
+                // Generate unique key for this segment
+                const uniqueKey = `page-${page.pageNumber}-segment-${segment.blockId}-${segmentIndex}`;
 
-                return Array.from(blockGroups.entries()).map(([blockId, lines], groupIndex) => {
-                  const block = blocks.find(b => b.id === blockId);
-                  if (!block) return null;
+                // Calculate the offset to hide content before this segment
+                const linesBefore = segment.startLine;
+                const offsetY = linesBefore * PAGE_CONFIG.lineHeight;
 
-                  // Generate unique key combining page number, block ID, and instance index
-                  const instanceCount = blockInstanceCounts.get(blockId) || 0;
-                  blockInstanceCounts.set(blockId, instanceCount + 1);
-                  const uniqueKey = `page-${page.pageNumber}-block-${blockId}-instance-${instanceCount}`;
-
-                  const firstLine = lines[0];
-                  const lastLine = lines[lines.length - 1];
-
-                  // Calculate the height needed for this block segment on this page
-                  const blockHeight = (lastLine.y - firstLine.y) + PAGE_CONFIG.lineHeight;
-
-                  return (
+                return (
+                  <div
+                    key={uniqueKey}
+                    data-block-id={segment.blockId}
+                    data-segment-start={segment.startOffset}
+                    data-segment-end={segment.endOffset}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={handleInput}
+                    onKeyDown={handleKeyDown}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
+                    className="editable-block"
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: segment.y - PAGE_CONFIG.marginTop,
+                      width: '100%',
+                      height: segment.height,
+                      lineHeight: `${PAGE_CONFIG.lineHeight}px`,
+                      fontSize: PAGE_CONFIG.fontSize,
+                      fontFamily: PAGE_CONFIG.fontFamily,
+                      outline: 'none',
+                      whiteSpace: 'pre-wrap',
+                      wordWrap: 'break-word',
+                      direction: 'ltr',
+                      textAlign: 'left',
+                      unicodeBidi: 'embed',
+                      overflow: 'hidden',
+                    }}
+                  >
                     <div
-                      key={uniqueKey}
-                      data-block-id={blockId}
-                      contentEditable
-                      suppressContentEditableWarning
-                      onInput={handleInput}
-                      onKeyDown={handleKeyDown}
-                      onCompositionStart={handleCompositionStart}
-                      onCompositionEnd={handleCompositionEnd}
-                      className="editable-block"
                       style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: firstLine.y - PAGE_CONFIG.marginTop,
-                        width: '100%',
-                        height: blockHeight,
-                        lineHeight: `${PAGE_CONFIG.lineHeight}px`,
-                        fontSize: PAGE_CONFIG.fontSize,
-                        fontFamily: PAGE_CONFIG.fontFamily,
-                        outline: 'none',
-                        whiteSpace: 'pre-wrap',
-                        wordWrap: 'break-word',
-                        direction: 'ltr',
-                        textAlign: 'left',
-                        unicodeBidi: 'embed',
+                        marginTop: -offsetY,
                       }}
                     >
                       {block.text}
                     </div>
-                  );
-                });
-              })()}
+                  </div>
+                );
+              })}
             </div>
             
             <div className="page-number">

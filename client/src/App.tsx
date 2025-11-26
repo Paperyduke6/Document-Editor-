@@ -168,6 +168,55 @@ const App: React.FC = () => {
     isComposingRef.current = false;
   }, []);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+
+    const target = e.currentTarget;
+    const blockId = target.getAttribute('data-block-id');
+    if (!blockId) return;
+
+    // Get plain text from clipboard (preserves newlines)
+    const pastedText = e.clipboardData.getData('text/plain');
+    if (!pastedText) return;
+
+    // Get segment offsets
+    const segmentStart = parseInt(target.getAttribute('data-segment-start') || '0');
+
+    // Get current cursor position within the segment
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    const preCaretRange = range.cloneRange();
+    preCaretRange.selectNodeContents(target);
+    preCaretRange.setEnd(range.endContainer, range.endOffset);
+    const caretOffsetInSegment = preCaretRange.toString().length;
+
+    // Calculate absolute position in the full block
+    const absoluteCaretOffset = segmentStart + caretOffsetInSegment;
+
+    // Get the length of any selected text (to replace it)
+    const selectedText = selection.toString();
+    const selectedLength = selectedText.length;
+
+    // Update the block state directly
+    setBlocks(prev => prev.map(block => {
+      if (block.id !== blockId) return block;
+
+      // Insert pasted text at cursor position, replacing any selection
+      const before = block.text.substring(0, absoluteCaretOffset);
+      const after = block.text.substring(absoluteCaretOffset + selectedLength);
+      const newText = before + pastedText + after;
+
+      return { ...block, text: newText };
+    }));
+
+    // Save cursor position for restoration (after the pasted text)
+    const newCursorPosition = absoluteCaretOffset + pastedText.length;
+    cursorPositionRef.current.clear();
+    cursorPositionRef.current.set(blockId, newCursorPosition);
+  }, []);
+
   const handleInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
     if (isComposingRef.current) return;
     if (isRestoringCursorRef.current) return; // Don't process input during cursor restoration
@@ -610,6 +659,7 @@ const App: React.FC = () => {
                     data-segment-end={segment.endOffset}
                     contentEditable
                     suppressContentEditableWarning
+                    onPaste={handlePaste}
                     onInput={handleInput}
                     onKeyDown={handleKeyDown}
                     onCompositionStart={handleCompositionStart}

@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const cursorPositionRef = useRef<Map<string, number>>(new Map());
   const isComposingRef = useRef(false);
+  const isRestoringCursorRef = useRef(false);
   const [selectAllActive, setSelectAllActive] = useState(false);
 
   // Repaginate whenever blocks change
@@ -25,14 +26,43 @@ const App: React.FC = () => {
   // Restore cursor positions after render
   useEffect(() => {
     if (selectAllActive) return; // Don't restore cursor during select all
+    if (cursorPositionRef.current.size === 0) return; // Nothing to restore
+    if (isRestoringCursorRef.current) return; // Already restoring, skip
 
-    cursorPositionRef.current.forEach((offset, blockId) => {
-      const element = document.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
-      if (element && document.activeElement === element) {
-        restoreCursorPosition(element, offset);
-      }
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      // Double-check we still have something to restore
+      if (cursorPositionRef.current.size === 0) return;
+
+      isRestoringCursorRef.current = true;
+
+      cursorPositionRef.current.forEach((absoluteOffset, blockId) => {
+        // Find all segments for this block
+        const elements = document.querySelectorAll(`[data-block-id="${blockId}"]`);
+
+        // Find which segment contains this cursor position
+        for (const el of Array.from(elements)) {
+          const element = el as HTMLElement;
+          const segmentStart = parseInt(element.getAttribute('data-segment-start') || '0');
+          const segmentEnd = parseInt(element.getAttribute('data-segment-end') || '0');
+
+          // Check if cursor position falls within this segment's range
+          if (absoluteOffset >= segmentStart && absoluteOffset <= segmentEnd) {
+            // Calculate relative offset within this segment
+            const relativeOffset = absoluteOffset - segmentStart;
+
+            // Focus and restore cursor after a brief delay
+            setTimeout(() => {
+              element.focus();
+              restoreCursorPosition(element, relativeOffset);
+              isRestoringCursorRef.current = false;
+            }, 0);
+            break;
+          }
+        }
+      });
+      cursorPositionRef.current.clear();
     });
-    cursorPositionRef.current.clear();
   });
 
   const handleSave = async () => {
@@ -66,6 +96,13 @@ const App: React.FC = () => {
       alert('Document loaded!');
     } catch (err) {
       alert('Load failed: ' + err);
+    }
+  };
+
+  const handleClear = () => {
+    if (window.confirm('Are you sure you want to clear the entire document? This cannot be undone.')) {
+      setBlocks([{ id: Date.now().toString(), text: '' }]);
+      setDocId('');
     }
   };
 
@@ -133,22 +170,38 @@ const App: React.FC = () => {
 
   const handleInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
     if (isComposingRef.current) return;
+    if (isRestoringCursorRef.current) return; // Don't process input during cursor restoration
 
     const target = e.currentTarget;
     const blockId = target.getAttribute('data-block-id');
     if (!blockId) return;
 
+    // Get segment offsets
+    const segmentStart = parseInt(target.getAttribute('data-segment-start') || '0');
+    const segmentEnd = parseInt(target.getAttribute('data-segment-end') || '0');
+
     const cursorPosition = saveCursorPosition(target);
-    const newText = target.textContent || '';
+    const segmentText = target.textContent || '';
 
     if (cursorPosition !== null) {
-      cursorPositionRef.current.set(blockId, cursorPosition);
+      // Adjust cursor position to account for segment offset
+      const absolutePosition = segmentStart + cursorPosition;
+      // Clear any previous cursor position for this block
+      cursorPositionRef.current.clear();
+      cursorPositionRef.current.set(blockId, absolutePosition);
     }
 
-    // Update block text - blocks can now span multiple pages
-    setBlocks(prev => prev.map(block =>
-      block.id === blockId ? { ...block, text: newText } : block
-    ));
+    // Reconstruct full block text
+    setBlocks(prev => prev.map(block => {
+      if (block.id !== blockId) return block;
+
+      // Replace the segment portion with the new text
+      const before = block.text.substring(0, segmentStart);
+      const after = block.text.substring(segmentEnd);
+      const newFullText = before + segmentText + after;
+
+      return { ...block, text: newFullText };
+    }));
   }, []);
 
   // Handle Ctrl+A to select all content
@@ -191,11 +244,143 @@ const App: React.FC = () => {
     const blockId = target.getAttribute('data-block-id');
     if (!blockId) return;
 
+    // Handle multi-block deletion (Delete or Backspace)
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+
+      // Check if selection spans multiple elements
+      if (!range.collapsed && range.startContainer !== range.endContainer) {
+        // Find all selected segments
+        const allSegments = document.querySelectorAll('[data-block-id]');
+        const selectedBlocks = new Map<string, {
+          element: HTMLElement,
+          segmentStart: number,
+          segmentEnd: number,
+          isFirst: boolean,
+          isLast: boolean,
+          selectionStart?: number,
+          selectionEnd?: number
+        }>();
+
+        // Determine which segments are in the selection
+        for (const segEl of Array.from(allSegments)) {
+          const element = segEl as HTMLElement;
+          if (selection.containsNode(element, true)) {
+            const segBlockId = element.getAttribute('data-block-id');
+            if (!segBlockId) continue;
+
+            const segmentStart = parseInt(element.getAttribute('data-segment-start') || '0');
+            const segmentEnd = parseInt(element.getAttribute('data-segment-end') || '0');
+
+            if (!selectedBlocks.has(segBlockId)) {
+              selectedBlocks.set(segBlockId, {
+                element,
+                segmentStart,
+                segmentEnd,
+                isFirst: false,
+                isLast: false
+              });
+            }
+          }
+        }
+
+        // If multiple blocks are selected, handle multi-block deletion
+        if (selectedBlocks.size > 1) {
+          e.preventDefault();
+
+          // Get selection start and end positions
+          const startElement = range.startContainer.nodeType === Node.TEXT_NODE
+            ? range.startContainer.parentElement
+            : range.startContainer as HTMLElement;
+          const endElement = range.endContainer.nodeType === Node.TEXT_NODE
+            ? range.endContainer.parentElement
+            : range.endContainer as HTMLElement;
+
+          const startSegment = startElement?.closest('[data-block-id]') as HTMLElement;
+          const endSegment = endElement?.closest('[data-block-id]') as HTMLElement;
+
+          if (!startSegment || !endSegment) return;
+
+          const startBlockId = startSegment.getAttribute('data-block-id');
+          const endBlockId = endSegment.getAttribute('data-block-id');
+
+          if (!startBlockId || !endBlockId) return;
+
+          // Calculate selection offsets within segments
+          const startRange = range.cloneRange();
+          startRange.selectNodeContents(startSegment);
+          startRange.setEnd(range.startContainer, range.startOffset);
+          const startOffsetInSegment = startRange.toString().length;
+
+          const endRange = range.cloneRange();
+          endRange.selectNodeContents(endSegment);
+          endRange.setEnd(range.endContainer, range.endOffset);
+          const endOffsetInSegment = endRange.toString().length;
+
+          const startSegmentOffset = parseInt(startSegment.getAttribute('data-segment-start') || '0');
+          const endSegmentOffset = parseInt(endSegment.getAttribute('data-segment-start') || '0');
+
+          const absoluteStartOffset = startSegmentOffset + startOffsetInSegment;
+          const absoluteEndOffset = endSegmentOffset + endOffsetInSegment;
+
+          // Find block indices
+          const startBlockIndex = blocks.findIndex(b => b.id === startBlockId);
+          const endBlockIndex = blocks.findIndex(b => b.id === endBlockId);
+
+          if (startBlockIndex === -1 || endBlockIndex === -1) return;
+
+          // Get text before selection in first block and after selection in last block
+          const firstBlock = blocks[startBlockIndex];
+          const lastBlock = blocks[endBlockIndex];
+
+          const textBefore = firstBlock.text.substring(0, absoluteStartOffset);
+          const textAfter = lastBlock.text.substring(absoluteEndOffset);
+
+          // Create merged block
+          const mergedText = textBefore + textAfter;
+
+          // Update blocks - remove all selected blocks and replace with merged one
+          setBlocks(prev => {
+            const newBlocks = [...prev];
+            // Replace first block with merged text
+            newBlocks[startBlockIndex] = { ...firstBlock, text: mergedText };
+            // Remove all blocks from start+1 to end (inclusive)
+            newBlocks.splice(startBlockIndex + 1, endBlockIndex - startBlockIndex);
+            return newBlocks;
+          });
+
+          // Set cursor position
+          setTimeout(() => {
+            const elements = document.querySelectorAll(`[data-block-id="${startBlockId}"]`);
+            for (const el of Array.from(elements)) {
+              const element = el as HTMLElement;
+              const segStart = parseInt(element.getAttribute('data-segment-start') || '0');
+              const segEnd = parseInt(element.getAttribute('data-segment-end') || '0');
+
+              if (absoluteStartOffset >= segStart && absoluteStartOffset <= segEnd) {
+                element.focus();
+                restoreCursorPosition(element, absoluteStartOffset - segStart);
+                break;
+              }
+            }
+          }, 10);
+
+          return;
+        }
+      }
+    }
+
     if (e.key === 'Enter') {
       e.preventDefault();
-      
+
       const currentIndex = blocks.findIndex(b => b.id === blockId);
       if (currentIndex === -1) return;
+
+      // Get segment offsets
+      const segmentStart = parseInt(target.getAttribute('data-segment-start') || '0');
 
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return;
@@ -204,14 +389,18 @@ const App: React.FC = () => {
       const preCaretRange = range.cloneRange();
       preCaretRange.selectNodeContents(target);
       preCaretRange.setEnd(range.endContainer, range.endOffset);
-      const caretOffset = preCaretRange.toString().length;
+      const caretOffsetInSegment = preCaretRange.toString().length;
 
-      const currentText = target.textContent || '';
-      const beforeCursor = currentText.substring(0, caretOffset);
-      const afterCursor = currentText.substring(caretOffset);
+      // Calculate absolute position in the full block
+      const absoluteCaretOffset = segmentStart + caretOffsetInSegment;
 
-      const newBlock: ContentBlock = { 
-        id: `block-${Date.now()}-${Math.random()}`, 
+      // Split the full block at the absolute position
+      const currentBlock = blocks[currentIndex];
+      const beforeCursor = currentBlock.text.substring(0, absoluteCaretOffset);
+      const afterCursor = currentBlock.text.substring(absoluteCaretOffset);
+
+      const newBlock: ContentBlock = {
+        id: `block-${Date.now()}-${Math.random()}`,
         text: afterCursor
       };
 
@@ -246,9 +435,13 @@ const App: React.FC = () => {
       const preCaretRange = range.cloneRange();
       preCaretRange.selectNodeContents(target);
       preCaretRange.setEnd(range.endContainer, range.endOffset);
-      const caretOffset = preCaretRange.toString().length;
+      const caretOffsetInSegment = preCaretRange.toString().length;
 
-      if (caretOffset === 0 && blocks.length > 1) {
+      // Get segment offsets
+      const segmentStart = parseInt(target.getAttribute('data-segment-start') || '0');
+
+      // Only merge blocks if we're at the very start of the block (first segment, position 0)
+      if (caretOffsetInSegment === 0 && segmentStart === 0 && blocks.length > 1) {
         e.preventDefault();
         const currentIndex = blocks.findIndex(b => b.id === blockId);
         if (currentIndex > 0) {
@@ -267,10 +460,30 @@ const App: React.FC = () => {
           });
 
           setTimeout(() => {
-            const prevElement = document.querySelector(`[data-block-id="${prevBlock.id}"]`) as HTMLDivElement;
-            if (prevElement) {
-              prevElement.focus();
-              restoreCursorPosition(prevElement, prevTextLength);
+            // Find the segment in the previous block that contains the cursor position
+            const prevElements = document.querySelectorAll(`[data-block-id="${prevBlock.id}"]`);
+            let targetElement: HTMLElement | null = null;
+
+            for (const el of Array.from(prevElements)) {
+              const element = el as HTMLElement;
+              const start = parseInt(element.getAttribute('data-segment-start') || '0');
+              const end = parseInt(element.getAttribute('data-segment-end') || '0');
+
+              if (prevTextLength >= start && prevTextLength <= end) {
+                targetElement = element;
+                break;
+              }
+            }
+
+            // If not found, use the last segment
+            if (!targetElement && prevElements.length > 0) {
+              targetElement = prevElements[prevElements.length - 1] as HTMLElement;
+            }
+
+            if (targetElement) {
+              targetElement.focus();
+              const segStart = parseInt(targetElement.getAttribute('data-segment-start') || '0');
+              restoreCursorPosition(targetElement, prevTextLength - segStart);
             }
           }, 10);
         }
@@ -355,6 +568,7 @@ const App: React.FC = () => {
           onChange={e => setLoadId(e.target.value)}
         />
         <button onClick={handleLoad}>📂 Load</button>
+        <button onClick={handleClear} style={{ backgroundColor: '#e74c3c', color: 'white' }}>🗑️ Clear</button>
         {docId && <span className="doc-id">ID: {docId}</span>}
         <span className="page-count">📄 {pages.length} {pages.length === 1 ? 'Page' : 'Pages'}</span>
       </div>
@@ -385,9 +599,8 @@ const App: React.FC = () => {
                 // Generate unique key for this segment
                 const uniqueKey = `page-${page.pageNumber}-segment-${segment.blockId}-${segmentIndex}`;
 
-                // Calculate the offset to hide content before this segment
-                const linesBefore = segment.startLine;
-                const offsetY = linesBefore * PAGE_CONFIG.lineHeight;
+                // Render ONLY the visible text for this segment
+                const visibleText = segment.lines.join('\n');
 
                 return (
                   <div
@@ -418,15 +631,13 @@ const App: React.FC = () => {
                       textAlign: 'left',
                       unicodeBidi: 'embed',
                       overflow: 'hidden',
+                      userSelect: 'text',
+                      WebkitUserSelect: 'text',
+                      MozUserSelect: 'text',
+                      msUserSelect: 'text',
                     }}
                   >
-                    <div
-                      style={{
-                        marginTop: -offsetY,
-                      }}
-                    >
-                      {block.text}
-                    </div>
+                    {visibleText}
                   </div>
                 );
               })}

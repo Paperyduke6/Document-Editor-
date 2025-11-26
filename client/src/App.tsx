@@ -599,8 +599,9 @@ const App: React.FC = () => {
                 // Generate unique key for this segment
                 const uniqueKey = `page-${page.pageNumber}-segment-${segment.blockId}-${segmentIndex}`;
 
-                // Render ONLY the visible text for this segment
-                const visibleText = segment.lines.join('\n');
+                // Render the actual portion of the original text for this segment
+                // This preserves the exact characters including newlines from the original text
+                const visibleText = block.text.substring(segment.startOffset, segment.endOffset);
 
                 return (
                   <div

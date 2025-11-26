@@ -72,8 +72,13 @@ export class PaginationEngine {
           end: charOffset + lineLength,
           text: lineText
         });
-        // Add 1 for newline character (except for last line)
-        charOffset += lineLength + 1;
+        charOffset += lineLength;
+
+        // Only add 1 if there's actually a newline character at this position in the original text
+        // This handles the difference between explicit line breaks (\n) and word-wrapped lines
+        if (charOffset < block.text.length && block.text[charOffset] === '\n') {
+          charOffset++; // Skip the newline character
+        }
       }
 
       // Now place lines on pages, creating segments

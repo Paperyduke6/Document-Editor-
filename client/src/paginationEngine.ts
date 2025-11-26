@@ -1,4 +1,4 @@
-import { PAGE_CONFIG, ContentBlock, Page, Line, BlockSegment } from './types';
+import { PAGE_CONFIG, ContentBlock, Page } from './types';
 import { TextMeasurer } from './textMeasurer';
 
 export class PaginationEngine {

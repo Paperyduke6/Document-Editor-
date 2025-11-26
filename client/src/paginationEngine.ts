@@ -65,15 +65,20 @@ export class PaginationEngine {
       let charOffset = 0;
       const lineOffsets: { start: number; end: number; text: string }[] = [];
 
-      for (const lineText of allLines) {
+      for (let i = 0; i < allLines.length; i++) {
+        const lineText = allLines[i];
         const lineLength = lineText.length;
         lineOffsets.push({
           start: charOffset,
           end: charOffset + lineLength,
           text: lineText
         });
+        // Add line length to offset
+        charOffset += lineLength;
         // Add 1 for newline character (except for last line)
-        charOffset += lineLength + 1;
+        if (i < allLines.length - 1) {
+          charOffset += 1;
+        }
       }
 
       // Now place lines on pages, creating segments

@@ -14,6 +14,7 @@ const App: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const cursorPositionRef = useRef<Map<string, number>>(new Map());
   const isComposingRef = useRef(false);
+  const isRestoringCursorRef = useRef(false);
   const [selectAllActive, setSelectAllActive] = useState(false);
 
   // Repaginate whenever blocks change
@@ -26,9 +27,15 @@ const App: React.FC = () => {
   useEffect(() => {
     if (selectAllActive) return; // Don't restore cursor during select all
     if (cursorPositionRef.current.size === 0) return; // Nothing to restore
+    if (isRestoringCursorRef.current) return; // Already restoring, skip
 
     // Use requestAnimationFrame to ensure DOM is ready
     requestAnimationFrame(() => {
+      // Double-check we still have something to restore
+      if (cursorPositionRef.current.size === 0) return;
+
+      isRestoringCursorRef.current = true;
+
       cursorPositionRef.current.forEach((absoluteOffset, blockId) => {
         // Find all segments for this block
         const elements = document.querySelectorAll(`[data-block-id="${blockId}"]`);
@@ -48,6 +55,7 @@ const App: React.FC = () => {
             setTimeout(() => {
               element.focus();
               restoreCursorPosition(element, relativeOffset);
+              isRestoringCursorRef.current = false;
             }, 0);
             break;
           }
@@ -162,6 +170,7 @@ const App: React.FC = () => {
 
   const handleInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
     if (isComposingRef.current) return;
+    if (isRestoringCursorRef.current) return; // Don't process input during cursor restoration
 
     const target = e.currentTarget;
     const blockId = target.getAttribute('data-block-id');
@@ -176,7 +185,10 @@ const App: React.FC = () => {
 
     if (cursorPosition !== null) {
       // Adjust cursor position to account for segment offset
-      cursorPositionRef.current.set(blockId, segmentStart + cursorPosition);
+      const absolutePosition = segmentStart + cursorPosition;
+      // Clear any previous cursor position for this block
+      cursorPositionRef.current.clear();
+      cursorPositionRef.current.set(blockId, absolutePosition);
     }
 
     // Reconstruct full block text
